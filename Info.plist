@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Frisch</string>
+	<key>CFBundleDisplayName</key>
+	<string>Frisch</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.gustavosalami.frisch</string>
+	<key>CFBundleExecutable</key>
+	<string>Frisch</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Gustavo Salami</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Frisch zeigt deine zuletzt benutzten Dateien — auch Screenshots auf dem Schreibtisch.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Frisch zeigt deine zuletzt benutzten Dateien aus dem Dokumente-Ordner.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Frisch zeigt deine zuletzt benutzten Downloads.</string>
+</dict>
+</plist>

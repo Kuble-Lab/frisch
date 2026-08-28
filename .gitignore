@@ -1,0 +1,6 @@
+build/
+AppIcon.iconset/
+*.log
+panel.png
+nohup.out
+.DS_Store
