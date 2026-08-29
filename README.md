@@ -8,7 +8,8 @@ A tiny native macOS menu bar app that shows your recently used files in a floati
 
 - **Global shortcut** (default ⌥⌘F, fully configurable) opens a floating panel with your latest files
 - **Instant**: a persistent Spotlight query with live updates — no per-open scanning
-- **Hybrid source**: Spotlight (`kMDItemLastUsedDate` / `kMDItemDateAdded` / `kMDItemFSCreationDate`) plus a direct scan of the TCC-protected folders Desktop/Documents/Downloads (Spotlight queries return nothing for those, even with file access granted — new screenshots still show up instantly)
+- **Hybrid source**: Spotlight (`kMDItemLastUsedDate` / `kMDItemDateAdded` / `kMDItemFSCreationDate`) plus a direct scan of the TCC-protected folders Desktop/Documents/Downloads (Spotlight queries return nothing for those, even with file access granted)
+- **Live folder watching**: Desktop/Documents/Downloads are monitored with dispatch sources — a new screenshot or download appears in the list instantly, even while the panel is open
 - **Finder-like list** (NSTableView): click selects, ⇧/⌘ multi-select, **Space = Quick Look**, **Return opens**, **double-click reveals in Finder**, **drag & drop** carries all selected files
 - **QuickLook thumbnails** for images, videos and PDFs
 - **File-type filters** (images / videos / audio / documents / code / folders / other)
@@ -88,7 +89,7 @@ Regenerate the app icon: `swift Scripts/makeicon.swift && iconutil -c icns AppIc
 ## Hard-earned macOS lessons
 
 - `NSMetadataQuery` with a custom `operationQueue`: **`start()` must run on that queue**, otherwise the query never delivers.
-- Spotlight queries return **no results** for TCC-protected folders (Desktop/Documents/Downloads), even when `FileManager` access is granted → scan them yourself and merge.
+- Spotlight queries return **no results** for TCC-protected folders (Desktop/Documents/Downloads), even when `FileManager` access is granted → scan them yourself and merge. And since Spotlight never fires updates for them either, watch those folders with dispatch sources or new files won't appear while the UI is open.
 - `isMovableByWindowBackground = true` eats file drags from lists — the drag attempt moves the window instead.
 - Synthetic events (IOHID/SkyLight) trigger neither Carbon hotkeys nor real drag sessions — test those features with real input only.
 - Ad-hoc signing → macOS may re-ask for TCC folder permissions after every rebuild.

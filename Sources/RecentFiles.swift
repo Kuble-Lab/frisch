@@ -75,6 +75,8 @@ final class RecentFilesModel: NSObject, ObservableObject {
     private var all: [FileItem] = []
     private var manualCache: [FileItem] = []
     private var manualCacheTime = Date.distantPast
+    private var folderMonitors: [DispatchSourceFileSystemObject] = []
+    private var monitorDebounce: DispatchWorkItem?
     private var shown = 50
     private let page = 50
     private var windowDays = 30
@@ -142,8 +144,44 @@ final class RecentFilesModel: NSObject, ObservableObject {
         }
     }
 
+    // Spotlight liefert für Desktop/Dokumente/Downloads keine Live-Updates
+    // (siehe process()) — ohne eigene Überwachung erscheint ein neuer Screenshot
+    // bei offenem Panel erst, wenn zufällig ein anderes Spotlight-Event feuert.
+    // Darum: die drei Ordner direkt beobachten und sofort neu publizieren.
+    private func startFolderMonitors() {
+        guard folderMonitors.isEmpty else { return }
+        for folder in ["Desktop", "Documents", "Downloads"] {
+            let fd = open(NSHomeDirectory() + "/" + folder, O_EVTONLY)
+            guard fd >= 0 else { continue }
+            let src = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: fd, eventMask: [.write, .extend, .rename],
+                queue: .global(qos: .utility))
+            src.setEventHandler { [weak self] in self?.folderChanged() }
+            src.setCancelHandler { close(fd) }
+            src.resume()
+            folderMonitors.append(src)
+        }
+        FrischLog.write("Ordner-Monitore aktiv: \(folderMonitors.count)")
+    }
+
+    private func folderChanged() {
+        // Kurz entprellen: ein Screenshot löst mehrere Verzeichnis-Events aus.
+        monitorDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            FrischLog.write("Ordner-Änderung erkannt — Neuscan Desktop/Dokumente/Downloads")
+            self.queryQueue.addOperation {
+                self.manualCacheTime = .distantPast
+                self.process()
+            }
+        }
+        monitorDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
     private func run() {
         isLoading = true
+        startFolderMonitors()
         stopQuery()
         let q = NSMetadataQuery()
         let since = Date().addingTimeInterval(-Double(windowDays) * 86400) as NSDate
