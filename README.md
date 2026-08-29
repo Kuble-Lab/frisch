@@ -28,6 +28,36 @@ The app is not notarized (no Apple Developer subscription). On first launch macO
 
 Then allow access to Desktop/Documents/Downloads when asked — that's what the app lists.
 
+## How to use
+
+**Open the panel**: press **⌥⌘F** (or click the menu bar icon → "Letzte Dateien anzeigen"). The shortcut is configurable in Settings. Press **Esc** to close — or just click into another app, the panel hides itself.
+
+The list works like the Finder:
+
+| Action | Result |
+|---|---|
+| Click | Select a file |
+| ⇧-click / ⌘-click | Select a range / toggle individual files |
+| **Space** | Quick Look the selection (arrow keys browse, Space closes) |
+| **Return** | Open the selected file(s) |
+| **Double-click** | Reveal the file in its folder in Finder |
+| **Drag** | Drag & drop all selected files anywhere (Finder, Mail, Slack, browser …) |
+| Right-click | Context menu: Open, Reveal in Finder, Quick Look |
+| ↑ / ↓ | Move through the list |
+
+Each row also has two buttons: **reveal in Finder** (folder icon) and **share** (share icon).
+
+At the bottom, **"Ältere laden …"** loads older files by progressively widening the time window.
+
+**Settings** (gear icon, or menu bar icon → "Einstellungen …"):
+
+- **Shortcut**: click the recorder field and press your new key combination (Esc cancels)
+- **Autostart**: launch Frisch at login
+- **File types**: show only the categories you care about (images, videos, audio, documents, code, folders, other)
+- **Excluded folders**: hide files from specific folders
+
+On first launch, allow access to Desktop, Documents and Downloads when macOS asks — these folders are scanned directly so new screenshots and downloads appear instantly.
+
 ## Build from source
 
 No Xcode project — plain `swiftc`:
