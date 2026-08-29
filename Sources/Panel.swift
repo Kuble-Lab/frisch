@@ -26,7 +26,12 @@ final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
     func toggle() {
-        if isVisible {
+        // Nur schliessen, wenn das Panel wirklich im Fokus steht. Ein Panel,
+        // das «sichtbar», aber nicht key ist (auf dem anderen Bildschirm
+        // liegen geblieben, oder nach verweigerter Aktivierung verwaist),
+        // würde der erste Druck sonst unsichtbar schliessen — und erst der
+        // zweite öffnet es wieder («muss 2x drücken»).
+        if isVisible && isKeyWindow {
             close()
         } else {
             show()
@@ -46,6 +51,16 @@ final class FloatingPanel: NSPanel {
         // Tastatur (Pfeile, Space=Quick Look, Enter=Öffnen) soll sofort in der Liste landen.
         if let table = Self.findTableView(in: contentView) {
             makeFirstResponder(table)
+        }
+        // Selbstheilung gegen das Aktivierungs-Race neuerer macOS-Versionen
+        // (cooperative activation): wird die Aktivierung erst gewährt und
+        // gleich wieder entzogen, blendet hidesOnDeactivate das eben gezeigte
+        // Panel sofort wieder aus → einmal nachlegen.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, !self.isVisible else { return }
+            FrischLog.write("Panel nach Öffnen sofort wieder versteckt — zweiter Versuch")
+            self.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
