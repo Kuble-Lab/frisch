@@ -1,49 +1,68 @@
 # Frisch 🍃
 
-Native macOS-Menüleisten-App, die die zuletzt benutzten Dateien anzeigt — Eigenbau-Ersatz für die eingestellte Fresh.app (Ironic Software).
+A tiny native macOS menu bar app that shows your recently used files in a floating panel — summoned with a global keyboard shortcut. Built as a replacement for the discontinued Fresh.app.
+
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5-orange) ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
 ## Features
 
-- **Globaler Shortcut** (Standard ⌥⌘F, frei belegbar) öffnet ein Floating-Panel mit den letzten Dateien
-- **Sofort offen:** persistente Spotlight-Query mit Live-Updates statt Abfrage pro Öffnen
-- **Hybrid-Quelle:** Spotlight (`kMDItemLastUsedDate` / `kMDItemDateAdded` / `kMDItemFSCreationDate`) plus direkter Scan der TCC-geschützten Ordner Schreibtisch/Dokumente/Downloads — Spotlight liefert für diese Ordner keine Query-Resultate, selbst mit erteilter Dateifreigabe
-- **QuickLook-Vorschauen** für Bilder, Videos und PDFs
-- **Dateityp-Filter** (Bilder / Videos / Audio / Dokumente / Code / Ordner / Andere)
-- **Finder-artige Liste** (NSTableView): Klick wählt aus, ⇧/⌘ für Mehrfachauswahl, **Space = Quick Look**, **Enter öffnet**, **Doppelklick zeigt im Finder**, **Drag & Drop** zieht alle ausgewählten Dateien; Buttons für **Im Finder zeigen** und **Teilen**
-- «Ältere laden …» erweitert das Zeitfenster schrittweise (30 Tage → ~10 Jahre)
-- Einstellungen: Shortcut-Recorder, Autostart (Login Item), ausgeschlossene Ordner
-- Diagnose-Log: `~/Library/Logs/frisch.log`
+- **Global shortcut** (default ⌥⌘F, fully configurable) opens a floating panel with your latest files
+- **Instant**: a persistent Spotlight query with live updates — no per-open scanning
+- **Hybrid source**: Spotlight (`kMDItemLastUsedDate` / `kMDItemDateAdded` / `kMDItemFSCreationDate`) plus a direct scan of the TCC-protected folders Desktop/Documents/Downloads (Spotlight queries return nothing for those, even with file access granted — new screenshots still show up instantly)
+- **Finder-like list** (NSTableView): click selects, ⇧/⌘ multi-select, **Space = Quick Look**, **Return opens**, **double-click reveals in Finder**, **drag & drop** carries all selected files
+- **QuickLook thumbnails** for images, videos and PDFs
+- **File-type filters** (images / videos / audio / documents / code / folders / other)
+- "Load older …" progressively widens the time window (30 days → ~10 years)
+- Settings: shortcut recorder, launch at login, excluded folders
+- Panel hides automatically when you switch to another app
+- Diagnostics log: `~/Library/Logs/frisch.log`
 
-## Build
+## Install
 
-Kein Xcode-Projekt — direkte `swiftc`-Kompilierung:
+**Download**: grab the latest `Frisch-x.y.dmg` from [Releases](https://github.com/Kuble-Lab/frisch/releases), open it and drag **Frisch.app** to **Applications**.
+
+The app is not notarized (no Apple Developer subscription). On first launch macOS will warn about an unidentified developer:
+
+- **macOS 14 and earlier**: right-click Frisch.app → **Open** → **Open**.
+- **macOS 15+**: try to open it once, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
+
+Then allow access to Desktop/Documents/Downloads when asked — that's what the app lists.
+
+## Build from source
+
+No Xcode project — plain `swiftc`:
 
 ```sh
-./build.sh          # baut build/Frisch.app (arm64, ad-hoc signiert)
+./build.sh              # builds build/Frisch.app (arm64, ad-hoc signed)
+UNIVERSAL=1 ./build.sh  # universal binary (Apple Silicon + Intel)
 cp -R build/Frisch.app /Applications/
 ```
 
-Benötigt Xcode bzw. eine Swift-Toolchain (Swift 5.9+, SwiftUI, macOS 13+).
+Requires Xcode or a Swift toolchain (Swift 5.9+, SwiftUI, macOS 13+).
 
-App-Icon neu generieren: `swift Scripts/makeicon.swift && iconutil -c icns AppIcon.iconset -o AppIcon.icns`
+Regenerate the app icon: `swift Scripts/makeicon.swift && iconutil -c icns AppIcon.iconset -o AppIcon.icns`
 
-## Architektur
+## Architecture
 
-| Datei | Zweck |
+| File | Purpose |
 |---|---|
-| `Sources/Main.swift` | App-Delegate, Statusmenü, Settings-Fenster, TCC-Trigger |
-| `Sources/Panel.swift` | Floating-Panel (NSPanel) + SwiftUI-Liste mit Zeilen |
-| `Sources/RecentFiles.swift` | Datenmodell: Spotlight-Query, Ordner-Scan, Kategorisierung, Filter |
-| `Sources/HotKey.swift` | Globaler Hotkey (Carbon `RegisterEventHotKey`) |
-| `Sources/Prefs.swift` | UserDefaults, Login-Item (SMAppService), Filter-Prefs |
-| `Sources/Settings.swift` | Einstellungen inkl. Shortcut-Recorder |
-| `Sources/Thumbnails.swift` | QuickLook-Thumbnails mit Cache |
-| `Sources/Log.swift` | Diagnose-Log |
+| `Sources/Main.swift` | App delegate, status menu, settings window, TCC trigger |
+| `Sources/Panel.swift` | Floating panel (NSPanel) + NSTableView list with SwiftUI rows |
+| `Sources/RecentFiles.swift` | Data model: Spotlight query, folder scan, classification, filters |
+| `Sources/HotKey.swift` | Global hotkey (Carbon `RegisterEventHotKey`) |
+| `Sources/Prefs.swift` | UserDefaults, login item (SMAppService), filter prefs |
+| `Sources/Settings.swift` | Settings UI incl. shortcut recorder |
+| `Sources/Thumbnails.swift` | QuickLook thumbnails with cache |
+| `Sources/Log.swift` | Diagnostics log |
 
-## Gelernte Fallen (hart erarbeitet)
+## Hard-earned macOS lessons
 
-- `NSMetadataQuery` mit eigener `operationQueue`: **`start()` muss auf dieser Queue laufen**, sonst liefert die Query nie.
-- Spotlight-Queries geben für TCC-geschützte Ordner (Desktop/Documents/Downloads) **keine Resultate** zurück, auch wenn `FileManager`-Zugriff gewährt ist → eigener Scan nötig.
-- `isMovableByWindowBackground = true` frisst Datei-Drags aus Listen — der Zieh-Versuch verschiebt das Fenster.
-- Synthetische Events (IOHID/SkyLight) triggern weder Carbon-Hotkeys noch echte Drag-Sessions — solche Features nur mit echten Eingaben testen.
-- Ad-hoc-Signatur → TCC-Freigaben können nach jedem Rebuild erneut abgefragt werden.
+- `NSMetadataQuery` with a custom `operationQueue`: **`start()` must run on that queue**, otherwise the query never delivers.
+- Spotlight queries return **no results** for TCC-protected folders (Desktop/Documents/Downloads), even when `FileManager` access is granted → scan them yourself and merge.
+- `isMovableByWindowBackground = true` eats file drags from lists — the drag attempt moves the window instead.
+- Synthetic events (IOHID/SkyLight) trigger neither Carbon hotkeys nor real drag sessions — test those features with real input only.
+- Ad-hoc signing → macOS may re-ask for TCC folder permissions after every rebuild.
+
+## License
+
+[MIT](LICENSE)

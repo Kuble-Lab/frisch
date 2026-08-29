@@ -3,12 +3,20 @@ set -e
 cd "$(dirname "$0")"
 mkdir -p build
 
-swiftc -O -parse-as-library -swift-version 5 \
-  Sources/*.swift \
-  -framework AppKit -framework SwiftUI -framework Carbon -framework ServiceManagement \
-  -framework QuickLookThumbnailing -framework UniformTypeIdentifiers -framework Quartz \
-  -target arm64-apple-macos13.0 \
-  -o build/Frisch
+FRAMEWORKS=(-framework AppKit -framework SwiftUI -framework Carbon -framework ServiceManagement
+            -framework QuickLookThumbnailing -framework UniformTypeIdentifiers -framework Quartz)
+
+if [[ "${UNIVERSAL:-0}" == "1" ]]; then
+  # Universal Binary (Apple Silicon + Intel) — für Releases.
+  swiftc -O -parse-as-library -swift-version 5 Sources/*.swift \
+    "${FRAMEWORKS[@]}" -target arm64-apple-macos13.0 -o build/Frisch-arm64
+  swiftc -O -parse-as-library -swift-version 5 Sources/*.swift \
+    "${FRAMEWORKS[@]}" -target x86_64-apple-macos13.0 -o build/Frisch-x86_64
+  lipo -create build/Frisch-arm64 build/Frisch-x86_64 -output build/Frisch
+else
+  swiftc -O -parse-as-library -swift-version 5 Sources/*.swift \
+    "${FRAMEWORKS[@]}" -target arm64-apple-macos13.0 -o build/Frisch
+fi
 
 APP=build/Frisch.app
 rm -rf "$APP"
