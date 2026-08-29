@@ -73,6 +73,7 @@ final class RecentFilesModel: NSObject, ObservableObject {
 
     private var query: NSMetadataQuery?
     private var all: [FileItem] = []
+    private var spotlightCache: [FileItem] = []
     private var manualCache: [FileItem] = []
     private var manualCacheTime = Date.distantPast
     private var folderMonitors: [DispatchSourceFileSystemObject] = []
@@ -122,12 +123,16 @@ final class RecentFilesModel: NSObject, ObservableObject {
         if query == nil {
             run()
         } else {
-            queryQueue.addOperation {
-                // Geschützte Ordner frisch scannen (neue Screenshots!), dann publizieren.
-                self.manualCacheTime = .distantPast
-                self.process()
-            }
+            // Geschützte Ordner frisch scannen (neue Screenshots!), dann publizieren.
+            enqueueRemerge()
         }
+    }
+
+    // Remerge-Ops überholen wartende process()-Läufe (gleiche serielle Queue).
+    private func enqueueRemerge() {
+        let op = BlockOperation { [weak self] in self?.remergeManualFolders() }
+        op.queuePriority = .veryHigh
+        queryQueue.addOperation(op)
     }
 
     func loadMore() {
@@ -170,13 +175,36 @@ final class RecentFilesModel: NSObject, ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             FrischLog.write("Ordner-Änderung erkannt — Neuscan Desktop/Dokumente/Downloads")
-            self.queryQueue.addOperation {
-                self.manualCacheTime = .distantPast
-                self.process()
-            }
+            self.enqueueRemerge()
         }
         monitorDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    // Home-Ordner MINUS Library MINUS ausgeschlossene Ordner als Scopes.
+    // Grund (gemessen): ~96 % der Home-Scope-Resultate stammten aus
+    // «Agency Dropbox» und «Library» — beide wurden erst NACH der teuren
+    // Verarbeitung weggefiltert; process() über ~74k Items dauerte 110 s
+    // und blockierte die Queue minutenlang (Screenshots erschienen nicht).
+    private func buildSearchScopes() -> [Any] {
+        let fm = FileManager.default
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let excluded = PrefsModel.shared.excluded
+        guard let entries = try? fm.contentsOfDirectory(at: home,
+                                                        includingPropertiesForKeys: [.isDirectoryKey],
+                                                        options: [.skipsHiddenFiles]) else {
+            return [NSMetadataQueryUserHomeScope]
+        }
+        var scopes: [URL] = []
+        for url in entries {
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+            if url.lastPathComponent == "Library" { continue }
+            let path = url.path
+            if excluded.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { continue }
+            scopes.append(url)
+        }
+        FrischLog.write("Such-Scopes: \(scopes.count) Ordner (Home minus Library/Ausschlüsse)")
+        return scopes.isEmpty ? [NSMetadataQueryUserHomeScope] : scopes
     }
 
     private func run() {
@@ -192,7 +220,9 @@ final class RecentFilesModel: NSObject, ObservableObject {
                                   NSMetadataItemLastUsedDateKey, since,
                                   sinceNew,
                                   NSMetadataItemFSCreationDateKey, sinceNew)
-        q.searchScopes = [NSMetadataQueryUserHomeScope]
+        // KEINE sortDescriptors: serverseitiges Sortieren liess das Gathering
+        // nie fertig werden (>8 min statt ~70 s bei ~74k Resultaten).
+        q.searchScopes = buildSearchScopes()
         q.notificationBatchingInterval = 5.0
         q.operationQueue = queryQueue
         let nc = NotificationCenter.default
@@ -244,6 +274,10 @@ final class RecentFilesModel: NSObject, ObservableObject {
 
         var seen = Set<String>()
         var out: [FileItem] = []
+        // ACHTUNG: value(ofAttribute:forResultAt:) liefert nur für Attribute
+        // aus sortDescriptors/valueListAttributes etwas — sonst still nil.
+        // Also result(at:) mit NSMetadataItem; billig genug, weil die Scopes
+        // die Junk-Ordner (Dropbox/Library, 96 % der Resultate) ausklammern.
         let count = min(q.resultCount, limit)
         out.reserveCapacity(min(count, 5000))
 
@@ -263,19 +297,36 @@ final class RecentFilesModel: NSObject, ObservableObject {
             out.append(FileItem(url: URL(fileURLWithPath: path), date: date,
                                 category: FileCategory.classify(typeTree: tree)))
         }
+        spotlightCache = out
         // Spotlight liefert für TCC-geschützte Ordner (Desktop/Dokumente/Downloads)
         // KEINE Resultate, obwohl Dateizugriff erlaubt ist — die scannen wir selbst.
         if Date().timeIntervalSince(manualCacheTime) > 10 {
             manualCache = scanProtectedFolders()
             manualCacheTime = Date()
         }
+        mergeAndPublish()
+    }
+
+    // Schneller Pfad für Ordner-Events und Panel-Öffnen: nur die drei Ordner
+    // neu scannen und mit dem letzten Spotlight-Stand mergen. process() über
+    // 70k+ Spotlight-Items dauert Sekunden — ein neuer Screenshot soll aber
+    // sofort erscheinen.
+    private func remergeManualFolders() {
+        manualCache = scanProtectedFolders()
+        manualCacheTime = Date()
+        mergeAndPublish()
+    }
+
+    private func mergeAndPublish() {
+        var seen = Set<String>()
+        var out: [FileItem] = []
+        out.reserveCapacity(spotlightCache.count + manualCache.count)
+        for itm in spotlightCache where seen.insert(itm.url.path).inserted { out.append(itm) }
         for itm in manualCache where !seen.contains(itm.url.path) {
             seen.insert(itm.url.path)
             out.append(itm)
         }
-
         out.sort { $0.date > $1.date }
-
         all = out
         publish()
     }

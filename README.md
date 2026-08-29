@@ -90,6 +90,8 @@ Regenerate the app icon: `swift Scripts/makeicon.swift && iconutil -c icns AppIc
 
 - `NSMetadataQuery` with a custom `operationQueue`: **`start()` must run on that queue**, otherwise the query never delivers.
 - Spotlight queries return **no results** for TCC-protected folders (Desktop/Documents/Downloads), even when `FileManager` access is granted → scan them yourself and merge. And since Spotlight never fires updates for them either, watch those folders with dispatch sources or new files won't appear while the UI is open.
+- A home-scope `NSMetadataQuery` for "recent files" returned **74k results** — 96% from Dropbox sync and `~/Library` caches that were filtered out client-side anyway. Building `NSMetadataItem`s for all of them took ~110 s per update and starved the serial queue. Scope the query to the folders you actually show (home minus Library minus exclusions): 74k → 2.9k results, 110 s → 3 s.
+- `NSMetadataQuery.value(ofAttribute:forResultAt:)` silently returns nil unless the attribute is registered via `sortDescriptors`/`valueListAttributes` — and server-side `sortDescriptors` made gathering never finish on large result sets. Use `result(at:)` on a small, well-scoped result set instead.
 - `isMovableByWindowBackground = true` eats file drags from lists — the drag attempt moves the window instead.
 - Synthetic events (IOHID/SkyLight) trigger neither Carbon hotkeys nor real drag sessions — test those features with real input only.
 - Ad-hoc signing → macOS may re-ask for TCC folder permissions after every rebuild.
