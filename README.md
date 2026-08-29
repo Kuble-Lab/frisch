@@ -9,7 +9,7 @@ Native macOS-Menüleisten-App, die die zuletzt benutzten Dateien anzeigt — Eig
 - **Hybrid-Quelle:** Spotlight (`kMDItemLastUsedDate` / `kMDItemDateAdded` / `kMDItemFSCreationDate`) plus direkter Scan der TCC-geschützten Ordner Schreibtisch/Dokumente/Downloads — Spotlight liefert für diese Ordner keine Query-Resultate, selbst mit erteilter Dateifreigabe
 - **QuickLook-Vorschauen** für Bilder, Videos und PDFs
 - **Dateityp-Filter** (Bilder / Videos / Audio / Dokumente / Code / Ordner / Andere)
-- Klick öffnet, Buttons für **Im Finder zeigen** und **Teilen**, **Drag & Drop** aus der Liste
+- **Finder-artige Liste** (NSTableView): Klick wählt aus, ⇧/⌘ für Mehrfachauswahl, **Space = Quick Look**, **Enter öffnet**, **Doppelklick zeigt im Finder**, **Drag & Drop** zieht alle ausgewählten Dateien; Buttons für **Im Finder zeigen** und **Teilen**
 - «Ältere laden …» erweitert das Zeitfenster schrittweise (30 Tage → ~10 Jahre)
 - Einstellungen: Shortcut-Recorder, Autostart (Login Item), ausgeschlossene Ordner
 - Diagnose-Log: `~/Library/Logs/frisch.log`

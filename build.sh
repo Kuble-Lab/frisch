@@ -6,7 +6,7 @@ mkdir -p build
 swiftc -O -parse-as-library -swift-version 5 \
   Sources/*.swift \
   -framework AppKit -framework SwiftUI -framework Carbon -framework ServiceManagement \
-  -framework QuickLookThumbnailing -framework UniformTypeIdentifiers \
+  -framework QuickLookThumbnailing -framework UniformTypeIdentifiers -framework Quartz \
   -target arm64-apple-macos13.0 \
   -o build/Frisch
 

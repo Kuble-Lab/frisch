@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Quartz
 
 final class FloatingPanel: NSPanel {
     private let model: RecentFilesModel
@@ -42,10 +43,23 @@ final class FloatingPanel: NSPanel {
         }
         makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // Tastatur (Pfeile, Space=Quick Look, Enter=Öffnen) soll sofort in der Liste landen.
+        if let table = Self.findTableView(in: contentView) {
+            makeFirstResponder(table)
+        }
     }
 
     override func cancelOperation(_ sender: Any?) {
         close()
+    }
+
+    private static func findTableView(in view: NSView?) -> NSTableView? {
+        guard let view else { return nil }
+        if let t = view as? NSTableView { return t }
+        for sub in view.subviews {
+            if let t = findTableView(in: sub) { return t }
+        }
+        return nil
     }
 }
 
@@ -61,6 +75,7 @@ struct PanelView: View {
                 Spacer()
                 if model.isLoading {
                     ProgressView().controlSize(.small)
+                        .help("Spotlight indexiert noch im Hintergrund")
                 }
                 Button {
                     (NSApp.delegate as? AppDelegate)?.openSettings()
@@ -76,35 +91,223 @@ struct PanelView: View {
 
             Divider()
 
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(model.items) { item in
-                        RowView(item: item) { panel?.close() }
-                    }
-                    if model.items.isEmpty && !model.isLoading {
-                        Text("Keine kürzlich benutzten Dateien gefunden.")
-                            .foregroundStyle(.secondary)
-                            .padding(30)
-                    }
-                    if model.canLoadMore && !model.items.isEmpty {
-                        Button("Ältere laden …") {
-                            model.loadMore()
-                        }
-                        .padding(.vertical, 12)
-                    }
+            ZStack {
+                FileTableView(model: model) { panel?.close() }
+                if model.items.isEmpty && !model.isLoading {
+                    Text("Keine kürzlich benutzten Dateien gefunden.")
+                        .foregroundStyle(.secondary)
+                        .padding(30)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
+            }
+
+            if model.canLoadMore && !model.items.isEmpty {
+                Divider()
+                Button("Ältere laden …") {
+                    model.loadMore()
+                }
+                .padding(.vertical, 8)
             }
         }
         .frame(width: 560, height: 620)
     }
 }
 
+// NSTableView statt SwiftUI-Liste: liefert die Mac-Standards, die SwiftUI
+// hier nicht kann — Klick=Auswahl, ⇧/⌘-Mehrfachauswahl, Drag aller
+// ausgewählten Zeilen, Doppelklick-Aktion und Space→QLPreviewPanel.
+struct FileTableView: NSViewRepresentable {
+    @ObservedObject var model: RecentFilesModel
+    var closePanel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(closePanel: closePanel)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let table = QLTableView()
+        table.coordinator = context.coordinator
+        context.coordinator.table = table
+
+        let col = NSTableColumn(identifier: .init("file"))
+        table.addTableColumn(col)
+        table.headerView = nil
+        table.rowHeight = 50
+        table.allowsMultipleSelection = true
+        table.style = .inset
+        table.backgroundColor = .clear
+        table.dataSource = context.coordinator
+        table.delegate = context.coordinator
+        table.target = context.coordinator
+        table.doubleAction = #selector(Coordinator.revealSelected)
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        table.menu = context.coordinator.buildMenu()
+
+        let scroll = NSScrollView()
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.closePanel = closePanel
+        context.coordinator.update(items: model.items)
+    }
+
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate,
+                             QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+        var closePanel: () -> Void
+        weak var table: QLTableView?
+        private(set) var items: [FileItem] = []
+        private var previewURLs: [URL] = []
+
+        init(closePanel: @escaping () -> Void) {
+            self.closePanel = closePanel
+        }
+
+        func update(items new: [FileItem]) {
+            guard new.map(\.id) != items.map(\.id) else {
+                items = new
+                return
+            }
+            // Auswahl über Daten-Updates hinweg per Pfad erhalten.
+            let selectedIds = Set((table?.selectedRowIndexes ?? [])
+                .compactMap { items.indices.contains($0) ? items[$0].id : nil })
+            items = new
+            table?.reloadData()
+            if !selectedIds.isEmpty {
+                let idx = IndexSet(new.enumerated()
+                    .filter { selectedIds.contains($0.element.id) }
+                    .map(\.offset))
+                table?.selectRowIndexes(idx, byExtendingSelection: false)
+            }
+        }
+
+        // MARK: Auswahl
+
+        func selectedURLs() -> [URL] {
+            guard let table else { return [] }
+            var rows = table.selectedRowIndexes
+            if let clicked = table.clickedRowIfValid, !rows.contains(clicked) {
+                rows = [clicked]
+            }
+            return rows.compactMap { items.indices.contains($0) ? items[$0].url : nil }
+        }
+
+        // MARK: Aktionen
+
+        @objc func openSelected() {
+            let urls = selectedURLs()
+            guard !urls.isEmpty else { return }
+            for url in urls { NSWorkspace.shared.open(url) }
+            closePanel()
+        }
+
+        @objc func revealSelected() {
+            let urls = selectedURLs()
+            guard !urls.isEmpty else { return }
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+            closePanel()
+        }
+
+        @objc func quickLookSelected() {
+            togglePreview()
+        }
+
+        func buildMenu() -> NSMenu {
+            let m = NSMenu()
+            for (title, action) in [("Öffnen", #selector(openSelected)),
+                                    ("Im Finder zeigen", #selector(revealSelected)),
+                                    ("Quick Look", #selector(quickLookSelected))] {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self
+                m.addItem(item)
+            }
+            return m
+        }
+
+        // MARK: Quick Look
+
+        func togglePreview() {
+            guard let panel = QLPreviewPanel.shared() else { return }
+            if panel.isVisible {
+                panel.orderOut(nil)
+            } else {
+                previewURLs = selectedURLs()
+                guard !previewURLs.isEmpty else { return }
+                panel.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+            previewURLs.count
+        }
+
+        func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+            previewURLs[index] as NSURL
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            if QLPreviewPanel.sharedPreviewPanelExists(),
+               QLPreviewPanel.shared().isVisible {
+                previewURLs = selectedURLs()
+                QLPreviewPanel.shared().reloadData()
+            }
+        }
+
+        // MARK: Tabelle
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            items.count
+        }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            guard items.indices.contains(row) else { return nil }
+            return NSHostingView(rootView: RowView(item: items[row], closePanel: closePanel))
+        }
+
+        // Drag & Drop: startet der Drag auf einer ausgewählten Zeile,
+        // zieht NSTableView automatisch ALLE ausgewählten Zeilen mit.
+        func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+            guard items.indices.contains(row) else { return nil }
+            return items[row].url as NSURL
+        }
+    }
+}
+
+final class QLTableView: NSTableView {
+    weak var coordinator: FileTableView.Coordinator?
+
+    var clickedRowIfValid: Int? {
+        clickedRow >= 0 ? clickedRow : nil
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == " " {
+            coordinator?.togglePreview()
+        } else if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
+            coordinator?.openSelected()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
+    // QLPreviewPanel sucht seinen Controller über die Responder-Chain.
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        true
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = coordinator
+        panel.delegate = coordinator
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
+}
+
 struct RowView: View {
     let item: FileItem
     var closePanel: () -> Void
-    @State private var hovering = false
     @State private var thumbnail: NSImage?
 
     init(item: FileItem, closePanel: @escaping () -> Void) {
@@ -173,34 +376,7 @@ struct RowView: View {
             .buttonStyle(.borderless)
             .help("Teilen")
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 6)
         .padding(.vertical, 5)
-        .background(hovering ? Color.primary.opacity(0.07) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onDrag {
-            // Beide Repräsentationen anbieten: public.file-url (Finder kopiert
-            // die Datei) UND Datei-Inhalt (Mail/Slack/Browser hängen sie an).
-            let provider = NSItemProvider(contentsOf: item.url) ?? NSItemProvider()
-            provider.registerObject(item.url as NSURL, visibility: .all)
-            provider.suggestedName = item.name
-            return provider
-        }
-        .onHover { hovering = $0 }
-        .onTapGesture {
-            NSWorkspace.shared.open(item.url)
-            closePanel()
-        }
-        .contextMenu {
-            Button("Öffnen") {
-                NSWorkspace.shared.open(item.url)
-                closePanel()
-            }
-            Button("Im Finder zeigen") {
-                NSWorkspace.shared.activateFileViewerSelecting([item.url])
-                closePanel()
-            }
-            ShareLink("Teilen", item: item.url)
-        }
     }
 }
