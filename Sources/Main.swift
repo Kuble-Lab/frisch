@@ -80,9 +80,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.title = "Frisch – Einstellungen"
             w.contentView = NSHostingView(rootView: SettingsView())
             w.isReleasedWhenClosed = false
+            // Gleiches Level wie das Panel (.floating), sonst landet das
+            // Settings-Fenster HINTER dem Panel.
+            w.level = .floating
             w.center()
             settingsWindow = w
         }
+        if panel.isVisible { panel.close() }
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

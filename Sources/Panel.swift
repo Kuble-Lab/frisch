@@ -17,7 +17,8 @@ final class FloatingPanel: NSPanel {
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
-        hidesOnDeactivate = false
+        // Klick in eine andere App deaktiviert Frisch → Panel verschwindet.
+        hidesOnDeactivate = true
         contentView = NSHostingView(rootView: PanelView(model: model, panel: self))
     }
 
