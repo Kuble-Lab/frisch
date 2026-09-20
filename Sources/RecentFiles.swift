@@ -70,6 +70,7 @@ struct FileItem: Identifiable {
 final class RecentFilesModel: NSObject, ObservableObject {
     @Published var items: [FileItem] = []
     @Published var isLoading = false
+    @Published var isRefreshing = false
 
     private var query: NSMetadataQuery?
     private var all: [FileItem] = []
@@ -125,6 +126,27 @@ final class RecentFilesModel: NSObject, ObservableObject {
         } else {
             // Geschützte Ordner frisch scannen (neue Screenshots!), dann publizieren.
             enqueueRemerge()
+        }
+    }
+
+    // Manuelle Aktualisierung (Button/⌘R). Zwei Schritte, weil eine Quelle
+    // allein nicht reicht: der Ordner-Scan zeigt neue Dateien sofort, auch
+    // wenn Spotlight sie noch nicht indexiert hat; der Query-Neustart holt
+    // frisch Indexiertes ausserhalb der drei beobachteten Ordner, das die
+    // laufende Query sonst erst mit ihrem nächsten Update meldet.
+    // Muss auf dem Main-Thread laufen (isRefreshing/isLoading sind @Published).
+    func manualRefresh() {
+        guard !isRefreshing else { return } // Mehrfachklicks: ein Lauf genügt
+        isRefreshing = true
+        FrischLog.write("Manuelle Aktualisierung angefordert")
+        enqueueRemerge()
+        // Läuft schon ein Gathering, wäre ein Neustart nur Arbeit: es
+        // publiziert ohnehin gleich und finge sonst von vorne an.
+        if !isLoading { run() }
+        // Spinner kurz stehen lassen: der Ordner-Scan ist oft in Millisekunden
+        // fertig, ein Aufblitzen wirkt wie «nichts passiert».
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            self?.isRefreshing = false
         }
     }
 

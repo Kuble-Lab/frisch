@@ -68,6 +68,18 @@ final class FloatingPanel: NSPanel {
         close()
     }
 
+    // ⌘R hier abfangen: Befehlstasten-Ereignisse erreichen keyDown der
+    // Tabelle gar nicht, und das Panel hat kein eigenes Menü, das sie
+    // als Tastenkürzel anbieten könnte.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "r" {
+            model.manualRefresh()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     private static func findTableView(in view: NSView?) -> NSTableView? {
         guard let view else { return nil }
         if let t = view as? NSTableView { return t }
@@ -93,12 +105,29 @@ struct PanelView: View {
                         .help("Spotlight indexiert noch im Hintergrund")
                 }
                 Button {
+                    model.manualRefresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .rotationEffect(.degrees(model.isRefreshing ? 360 : 0))
+                        // Beim Stoppen ohne Dauer zurücksetzen, sonst dreht
+                        // das Symbol sichtbar rückwärts.
+                        .animation(model.isRefreshing
+                                   ? .linear(duration: 0.7).repeatForever(autoreverses: false)
+                                   : .linear(duration: 0),
+                                   value: model.isRefreshing)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isRefreshing)
+                .help("Jetzt aktualisieren (⌘R)")
+                .accessibilityLabel("Aktualisieren")
+                Button {
                     (NSApp.delegate as? AppDelegate)?.openSettings()
                 } label: {
                     Image(systemName: "gearshape")
                 }
                 .buttonStyle(.borderless)
                 .help("Einstellungen")
+                .accessibilityLabel("Einstellungen")
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)

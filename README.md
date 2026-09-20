@@ -48,6 +48,8 @@ The list works like the Finder:
 
 Each row also has two buttons: **reveal in Finder** (folder icon) and **share** (share icon).
 
+The **refresh button** (circular arrow, top right) or **⌘R** checks for new files right away: it rescans Desktop/Documents/Downloads directly and restarts the Spotlight query, so files Spotlight hasn't indexed yet show up without waiting.
+
 At the bottom, **"Ältere laden …"** loads older files by progressively widening the time window.
 
 **Settings** (gear icon, or menu bar icon → "Einstellungen …"):
