@@ -175,7 +175,7 @@ struct FileTableView: NSViewRepresentable {
         let col = NSTableColumn(identifier: .init("file"))
         table.addTableColumn(col)
         table.headerView = nil
-        table.rowHeight = 50
+        table.rowHeight = 90
         table.allowsMultipleSelection = true
         table.style = .inset
         table.backgroundColor = .clear
@@ -377,8 +377,8 @@ struct RowView: View {
                 if let thumbnail {
                     Image(nsImage: thumbnail)
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 40, height: 40)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 80, height: 80)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay(RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
@@ -388,7 +388,7 @@ struct RowView: View {
                         .frame(width: 32, height: 32)
                 }
             }
-            .frame(width: 40, height: 40)
+            .frame(width: 80, height: 80)
             .onAppear {
                 if thumbnail == nil {
                     ThumbnailLoader.shared.load(for: item.url) { thumbnail = $0 }
