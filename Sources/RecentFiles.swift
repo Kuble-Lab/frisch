@@ -76,9 +76,10 @@ final class RecentFilesModel: NSObject, ObservableObject {
     private var all: [FileItem] = []
     private var spotlightCache: [FileItem] = []
     private var manualCache: [FileItem] = []
-    private var manualCacheTime = Date.distantPast
-    private var folderMonitors: [DispatchSourceFileSystemObject] = []
-    private var monitorDebounce: DispatchWorkItem?
+    private lazy var folderScanner = FolderScanner { [weak self] files in
+        self?.manualCache = files
+        self?.mergeAndPublish()
+    }
     private var shown = 50
     private let page = 50
     private var windowDays = 30
@@ -94,6 +95,14 @@ final class RecentFilesModel: NSObject, ObservableObject {
         return q
     }()
 
+    private let mergeQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+    private var mergeGeneration = 0
+
     override init() {
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(filterChanged),
@@ -101,7 +110,7 @@ final class RecentFilesModel: NSObject, ObservableObject {
     }
 
     @objc private func filterChanged() {
-        queryQueue.addOperation { self.publish() }
+        publish()
     }
 
     private var filteredAll: [FileItem] {
@@ -150,57 +159,20 @@ final class RecentFilesModel: NSObject, ObservableObject {
         }
     }
 
-    // Remerge-Ops überholen wartende process()-Läufe (gleiche serielle Queue).
+    // Eigene Queues pro Ordner: auch ein langsamer Documents-Scan darf den
+    // Screenshot-Ordner nicht aufhalten. Ergebnisse kommen auf dem Main-Thread.
     private func enqueueRemerge() {
-        let op = BlockOperation { [weak self] in self?.remergeManualFolders() }
-        op.queuePriority = .veryHigh
-        queryQueue.addOperation(op)
+        folderScanner.refresh(windowDays: windowDays)
     }
 
     func loadMore() {
         shown += page
-        queryQueue.addOperation {
-            if self.shown > self.filteredAll.count && self.windowDays < self.maxWindowDays {
-                DispatchQueue.main.async {
-                    self.windowDays = min(self.windowDays * 4, self.maxWindowDays)
-                    self.run()
-                }
-            } else {
-                self.publish()
-            }
+        if shown > filteredAll.count && windowDays < maxWindowDays {
+            windowDays = min(windowDays * 4, maxWindowDays)
+            run()
+        } else {
+            publish()
         }
-    }
-
-    // Spotlight liefert für Desktop/Dokumente/Downloads keine Live-Updates
-    // (siehe process()) — ohne eigene Überwachung erscheint ein neuer Screenshot
-    // bei offenem Panel erst, wenn zufällig ein anderes Spotlight-Event feuert.
-    // Darum: die drei Ordner direkt beobachten und sofort neu publizieren.
-    private func startFolderMonitors() {
-        guard folderMonitors.isEmpty else { return }
-        for folder in ["Desktop", "Documents", "Downloads"] {
-            let fd = open(NSHomeDirectory() + "/" + folder, O_EVTONLY)
-            guard fd >= 0 else { continue }
-            let src = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: fd, eventMask: [.write, .extend, .rename],
-                queue: .global(qos: .utility))
-            src.setEventHandler { [weak self] in self?.folderChanged() }
-            src.setCancelHandler { close(fd) }
-            src.resume()
-            folderMonitors.append(src)
-        }
-        FrischLog.write("Ordner-Monitore aktiv: \(folderMonitors.count)")
-    }
-
-    private func folderChanged() {
-        // Kurz entprellen: ein Screenshot löst mehrere Verzeichnis-Events aus.
-        monitorDebounce?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            FrischLog.write("Ordner-Änderung erkannt — Neuscan Desktop/Dokumente/Downloads")
-            self.enqueueRemerge()
-        }
-        monitorDebounce = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     // Home-Ordner MINUS Library MINUS ausgeschlossene Ordner als Scopes.
@@ -231,7 +203,7 @@ final class RecentFilesModel: NSObject, ObservableObject {
 
     private func run() {
         isLoading = true
-        startFolderMonitors()
+        enqueueRemerge()
         stopQuery()
         let q = NSMetadataQuery()
         let since = Date().addingTimeInterval(-Double(windowDays) * 86400) as NSDate
@@ -270,27 +242,27 @@ final class RecentFilesModel: NSObject, ObservableObject {
     }
 
     @objc private func gatherProgress(_ note: Notification) {
-        // Während des ersten Gatherings nur ein schnelles Teilbild publizieren,
-        // damit das Panel sofort etwas zeigt — Vollverarbeitung erst am Ende.
-        if all.count < 200 {
-            process(limit: 800)
-        }
+        guard let q = note.object as? NSMetadataQuery else { return }
+        process(q, limit: 800)
     }
 
     @objc private func queryUpdated(_ note: Notification) {
-        process()
+        guard let q = note.object as? NSMetadataQuery else { return }
+        process(q)
     }
 
     @objc private func gatherDone(_ note: Notification) {
-        process()
-        FrischLog.write("Gathering fertig: \(query?.resultCount ?? -1) Spotlight-Resultate, \(all.count) Einträge nach Dedupe")
-        let desktopCount = all.filter { $0.url.path.hasPrefix(NSHomeDirectory() + "/Desktop/") }.count
-        FrischLog.write("Davon auf dem Schreibtisch: \(desktopCount)")
-        DispatchQueue.main.async { self.isLoading = false }
+        guard let q = note.object as? NSMetadataQuery else { return }
+        process(q)
+        let count = q.resultCount
+        DispatchQueue.main.async {
+            guard self.query === q else { return }
+            FrischLog.write("Gathering fertig: \(count) Spotlight-Resultate")
+            self.isLoading = false
+        }
     }
 
-    private func process(limit: Int = .max) {
-        guard let q = query else { return }
+    private func process(_ q: NSMetadataQuery, limit: Int = .max) {
         q.disableUpdates()
         defer { q.enableUpdates() }
 
@@ -319,72 +291,44 @@ final class RecentFilesModel: NSObject, ObservableObject {
             out.append(FileItem(url: URL(fileURLWithPath: path), date: date,
                                 category: FileCategory.classify(typeTree: tree)))
         }
-        spotlightCache = out
-        // Spotlight liefert für TCC-geschützte Ordner (Desktop/Dokumente/Downloads)
-        // KEINE Resultate, obwohl Dateizugriff erlaubt ist — die scannen wir selbst.
-        if Date().timeIntervalSince(manualCacheTime) > 10 {
-            manualCache = scanProtectedFolders()
-            manualCacheTime = Date()
+        let snapshot = out
+        DispatchQueue.main.async {
+            // Ein inzwischen ersetzter Query-Lauf darf keinen neueren Stand
+            // überschreiben. Alle Caches und UI-Zustände gehören dem Main-Thread.
+            guard self.query === q else { return }
+            self.spotlightCache = snapshot
+            self.mergeAndPublish()
         }
-        mergeAndPublish()
-    }
-
-    // Schneller Pfad für Ordner-Events und Panel-Öffnen: nur die drei Ordner
-    // neu scannen und mit dem letzten Spotlight-Stand mergen. process() über
-    // 70k+ Spotlight-Items dauert Sekunden — ein neuer Screenshot soll aber
-    // sofort erscheinen.
-    private func remergeManualFolders() {
-        manualCache = scanProtectedFolders()
-        manualCacheTime = Date()
-        mergeAndPublish()
     }
 
     private func mergeAndPublish() {
-        var seen = Set<String>()
-        var out: [FileItem] = []
-        out.reserveCapacity(spotlightCache.count + manualCache.count)
-        for itm in spotlightCache where seen.insert(itm.url.path).inserted { out.append(itm) }
-        for itm in manualCache where !seen.contains(itm.url.path) {
-            seen.insert(itm.url.path)
-            out.append(itm)
-        }
-        out.sort { $0.date > $1.date }
-        all = out
-        publish()
-    }
-
-    private func scanProtectedFolders() -> [FileItem] {
-        let fm = FileManager.default
-        let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey,
-                                      .addedToDirectoryDateKey, .contentTypeKey, .isDirectoryKey]
-        let since = Date().addingTimeInterval(-Double(windowDays) * 86400)
-        var out: [FileItem] = []
-        for folder in ["Desktop", "Documents", "Downloads"] {
-            let dir = URL(fileURLWithPath: NSHomeDirectory() + "/" + folder, isDirectory: true)
-            guard let urls = try? fm.contentsOfDirectory(at: dir,
-                                                         includingPropertiesForKeys: keys,
-                                                         options: [.skipsHiddenFiles]) else { continue }
-            for url in urls {
-                guard let vals = try? url.resourceValues(forKeys: Set(keys)) else { continue }
-                let dates = [vals.contentModificationDate, vals.creationDate,
-                             vals.addedToDirectoryDate].compactMap { $0 }
-                guard let date = dates.max(), date > since else { continue }
-                let category: FileCategory
-                if vals.isDirectory == true {
-                    category = .folders
-                } else if let type = vals.contentType {
-                    category = FileCategory.classify(utType: type)
-                } else {
-                    category = .other
-                }
-                out.append(FileItem(url: url, date: date, category: category))
+        // Auch Dedupe/Sortieren grosser Spotlight-Snapshots gehört nicht auf
+        // den UI-Thread. Wartende Zwischenstände durch den neuesten ersetzen.
+        mergeGeneration += 1
+        let generation = mergeGeneration
+        let spotlight = spotlightCache
+        let manual = manualCache
+        mergeQueue.cancelAllOperations()
+        mergeQueue.addOperation {
+            var byPath: [String: FileItem] = [:]
+            for item in spotlight + manual {
+                let path = item.url.path
+                if let previous = byPath[path], previous.date >= item.date { continue }
+                byPath[path] = item
+            }
+            let merged = byPath.values.sorted {
+                $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date
+            }
+            DispatchQueue.main.async {
+                guard self.mergeGeneration == generation else { return }
+                self.all = merged
+                self.publish()
             }
         }
-        return out
     }
 
     private func publish() {
         let snapshot = Array(filteredAll.prefix(shown))
-        DispatchQueue.main.async { self.items = snapshot }
+        items = snapshot
     }
 }

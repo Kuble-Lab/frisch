@@ -1,0 +1,16 @@
+name: Check
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regression tests
+        run: ./Tests/run.sh
+      - name: Universal build
+        run: UNIVERSAL=1 ./build.sh

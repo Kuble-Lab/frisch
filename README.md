@@ -81,15 +81,19 @@ Regenerate the app icon: `swift Scripts/makeicon.swift && iconutil -c icns AppIc
 |---|---|
 | `Sources/Main.swift` | App delegate, status menu, settings window, TCC trigger |
 | `Sources/Panel.swift` | Floating panel (NSPanel) + NSTableView list with SwiftUI rows |
-| `Sources/RecentFiles.swift` | Data model: Spotlight query, folder scan, classification, filters |
+| `Sources/RecentFiles.swift` | Data model: Spotlight query, merging, classification, filters |
+| `Sources/FolderScanner.swift` | Independent live scans for Desktop, Documents and Downloads |
 | `Sources/HotKey.swift` | Global hotkey (Carbon `RegisterEventHotKey`) |
 | `Sources/Prefs.swift` | UserDefaults, login item (SMAppService), filter prefs |
 | `Sources/Settings.swift` | Settings UI incl. shortcut recorder |
 | `Sources/Thumbnails.swift` | QuickLook thumbnails with cache |
 | `Sources/Log.swift` | Diagnostics log |
 
+Run regression tests with `./Tests/run.sh` (temporary files only). They cover live Desktop/Downloads events while Documents is blocked, initial scans, deletion and hidden files.
+
 ## Hard-earned macOS lessons
 
+- Direct folder scans must run independently of Spotlight and of one another. Queue priority cannot interrupt an already running Spotlight operation. Each folder publishes immediately; event bursts are coalesced without indefinitely postponing updates.
 - `NSMetadataQuery` with a custom `operationQueue`: **`start()` must run on that queue**, otherwise the query never delivers.
 - Spotlight queries return **no results** for TCC-protected folders (Desktop/Documents/Downloads), even when `FileManager` access is granted → scan them yourself and merge. And since Spotlight never fires updates for them either, watch those folders with dispatch sources or new files won't appear while the UI is open.
 - A home-scope `NSMetadataQuery` for "recent files" returned **74k results** — 96% from Dropbox sync and `~/Library` caches that were filtered out client-side anyway. Building `NSMetadataItem`s for all of them took ~110 s per update and starved the serial queue. Scope the query to the folders you actually show (home minus Library minus exclusions): 74k → 2.9k results, 110 s → 3 s.
